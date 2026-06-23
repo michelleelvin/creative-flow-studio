@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ArrowUpRight, AlertTriangle, Clock, CheckCircle2 } from "lucide-react";
-import { tasks, projects, users } from "@/data/mock";
+import { useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { StatusBadge } from "@/components/badges";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -14,15 +15,39 @@ import { IncomingProjectsStrip } from "@/components/setup/IncomingProjectsStrip"
 
 export const Route = createFileRoute("/manager")({ component: ManagerDashboard });
 
-const employees = users.filter((u) => u.role === "employee");
 
 function ManagerDashboard() {
   const setRole = useRole((s) => s.setRole);
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
+  useEffect(() => {
+  async function loadData() {
+    const { data: tasksData } = await supabase
+      .from("tasks")
+      .select("*");
+
+    const { data: projectsData } = await supabase
+      .from("projects")
+      .select("*");
+
+    const { data: employeesData } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("role", "employee");
+
+    setTasks(tasksData || []);
+    setProjects(projectsData || []);
+    setEmployees(employeesData || []);
+  }
+
+  loadData();
+}, []);
   useEffect(() => { setRole("manager"); }, [setRole]);
 
   const reviewQueue = tasks.filter((t) => t.status === "review").slice(0, 6);
   const overdue = tasks.filter((t) => new Date(t.deadline).getTime() < Date.now() && t.status !== "done");
-
+  console.log("PROJECTS:", projects);
   const kpis = [
     { label: "Active Deliverables", value: projects.length, trend: "+2 this week", icon: ArrowUpRight, tone: "text-status-done" },
     { label: "Pending Approvals", value: reviewQueue.length, trend: "3 over 24h", icon: Clock, tone: "text-status-review" },
@@ -65,18 +90,24 @@ function ManagerDashboard() {
             ) : (
               <ul className="divide-y">
                 {reviewQueue.map((t) => {
-                  const u = users.find((x) => x.id === t.assigneeId)!;
-                  const p = projects.find((x) => x.id === t.projectId)!;
+                  const u = employees.find(
+                    (x) => x.id === t.assigneeId || x.id === t.assignee_id
+                  );
+                  const p = projects.find(
+                    (x) => x.id === t.projectId || x.id === t.project_id
+                  );
                   return (
                     <li key={t.id} className="px-5 py-3 flex items-center gap-3">
                       <div className="size-10 rounded bg-muted shrink-0" />
                       <Avatar className="size-7">
-                        <AvatarImage src={u.avatar} />
-                        <AvatarFallback>{u.name[0]}</AvatarFallback>
+                        <AvatarFallback>{u?.full_name?.[0] ?? "U"}</AvatarFallback>
                       </Avatar>
                       <div className="min-w-0 flex-1">
                         <div className="text-sm font-medium truncate">{t.title}</div>
-                        <div className="text-xs text-muted-foreground">{u.name} · {p.name} · {formatDistanceToNow(new Date(t.deadline), { addSuffix: true })}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {u?.full_name ?? "Unassigned"} · {p?.name ?? "Unknown Project"} ·{" "}
+                          {formatDistanceToNow(new Date(t.deadline), { addSuffix: true })}
+                        </div>
                       </div>
                       <StatusBadge status={t.status} />
                       <Button size="sm">Review</Button>
@@ -96,12 +127,15 @@ function ManagerDashboard() {
             </div>
             <ul className="divide-y max-h-[360px] overflow-auto">
               {overdue.slice(0, 8).map((t) => {
-                const u = users.find((x) => x.id === t.assigneeId)!;
+                const u = employees.find((x) => x.id === t.assigneeId);
                 const days = Math.floor((Date.now() - new Date(t.deadline).getTime()) / 86400_000);
                 return (
                   <li key={t.id} className="px-5 py-3">
                     <div className="text-sm font-medium truncate">{t.title}</div>
-                    <div className="text-xs text-muted-foreground">{u.name} · <span className="text-status-overdue">{days}d late</span></div>
+                    <div className="text-xs text-muted-foreground">
+                      {u?.full_name ?? "Unassigned"} ·{" "}
+                      <span className="text-status-overdue">{days}d late</span>
+                    </div>
                     <div className="mt-2 flex gap-2">
                       <Button size="sm" variant="outline">Reassign</Button>
                       <Button size="sm" variant="ghost">Extend</Button>
@@ -116,7 +150,7 @@ function ManagerDashboard() {
         {/* Workload heatmap */}
         <Card className="p-5">
           <div className="font-medium mb-4">Team workload — this week</div>
-          <Heatmap />
+          <Heatmap employees={employees} />
         </Card>
 
         {/* Deliverable pipeline */}
@@ -142,7 +176,7 @@ function ManagerDashboard() {
   );
 }
 
-function Heatmap() {
+function Heatmap({ employees }: { employees: any[] }) {
   const days = ["Mon", "Tue", "Wed", "Thu", "Fri"];
   return (
     <div className="overflow-x-auto">
@@ -160,8 +194,8 @@ function Heatmap() {
             <tr key={u.id}>
               <td className="pr-4 py-1.5">
                 <div className="flex items-center gap-2">
-                  <Avatar className="size-6"><AvatarImage src={u.avatar} /><AvatarFallback>{u.name[0]}</AvatarFallback></Avatar>
-                  <span className="text-sm truncate max-w-[140px]">{u.name}</span>
+                  <Avatar className="size-6"><AvatarImage src={u.avatar} /><AvatarFallback>{u.full_name?.[0]}</AvatarFallback></Avatar>
+                  <span className="text-sm truncate max-w-[140px]">{u.full_name}</span>
                 </div>
               </td>
               {days.map((d, j) => {

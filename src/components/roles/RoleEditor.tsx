@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { supabase } from "@/lib/supabase";
 import { Label } from "@/components/ui/label";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -41,6 +42,8 @@ export function RoleEditor({ mode, initial }: Props) {
 
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [level, setLevel] = useState<RoleLevel | "">(initial?.level ?? "");
   const [perms, setPerms] = useState<PermissionMap>(initial?.permissions ?? {});
   const [confirmSave, setConfirmSave] = useState(false);
@@ -82,24 +85,58 @@ export function RoleEditor({ mode, initial }: Props) {
     dirty &&
     name.trim().length > 0 &&
     description.trim().length > 0 &&
+    password.trim().length > 0 &&
     level &&
     !nameError;
+ 
 
-  const doSave = () => {
-    const err = checkName(name);
-    if (err) { setNameError(err); return; }
-    if (mode === "create") {
-      createRole({ name: name.trim(), description: description.trim(), level: level as RoleLevel, permissions: perms });
-      toast.success("Custom role created");
-      navigate({ to: "/employees/roles" });
+  const doSave = async () => {
+  const err = checkName(name);
+
+  if (err) {
+    setNameError(err);
+    return;
+  }
+
+  if (mode === "create") {
+    const { data, error } = await supabase.functions.invoke(
+      "create-employee",
+      {
+        body: {
+          email: email.trim(),
+          password: "Temp@123456",
+          full_name: name.trim(),
+          role: level,
+        },
+      }
+    );
+
+    if (error) {
+      toast.error(error.message);
       return;
     }
-    if (mode === "edit" && initial) {
-      upsertRole({ ...initial, name: name.trim(), description: description.trim(), level: level as RoleLevel, permissions: perms });
-      toast.success("Role updated. Affected employees will see changes shortly.");
-      navigate({ to: "/employees/roles" });
-    }
-  };
+
+    toast.success("Employee created");
+    navigate({ to: "/employees/roles" });
+    return;
+  }  
+
+  if (mode === "edit" && initial) {
+    upsertRole({
+      ...initial,
+      name: name.trim(),
+      description: description.trim(),
+      level: level as RoleLevel,
+      permissions: perms,
+    });
+
+    toast.success(
+      "Role updated. Affected employees will see changes shortly."
+    );
+
+    navigate({ to: "/employees/roles" });
+  }
+};
 
   const handleSaveClick = () => {
     if (mode === "edit" && assigned.length > 0) setConfirmSave(true);
@@ -232,6 +269,32 @@ export function RoleEditor({ mode, initial }: Props) {
             />
             <div className="mt-1 text-xs text-muted-foreground text-right tabular-nums">{description.length}/200</div>
           </div>
+
+          <div>
+            <Label className="text-sm">
+              Email <span className="text-destructive">*</span>
+            </Label>
+
+            <Input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className="mt-1.5"
+              placeholder="employee@company.com"
+            />
+          </div>
+          <div>
+              <Label className="text-sm">
+                Password <span className="text-destructive">*</span>
+              </Label>
+
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="mt-1.5"
+                placeholder="Enter temporary password"
+              />
+            </div>
 
           <div>
             <Label className="text-sm">

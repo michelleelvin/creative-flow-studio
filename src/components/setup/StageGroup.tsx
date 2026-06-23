@@ -92,9 +92,8 @@ export function StageGroup({
               variant="ghost"
               size="sm"
               onClick={() => onAddTask(stage)}
-              className="text-xs text-muted-foreground hover:text-foreground"
             >
-              <Plus className="size-3.5" /> Add task to {stage}
+              + Add task to {stage}
             </Button>
           </div>
         </div>

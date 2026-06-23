@@ -8,14 +8,14 @@ import { projects } from "@/data/mock";
 import { useRole } from "@/stores/role";
 import { ArrowRight } from "lucide-react";
 
+
 export const Route = createFileRoute("/projects/")({
   component: ProjectsIndex,
 });
 
 function ProjectsIndex() {
-  const setRole = useRole((s) => s.setRole);
-  useEffect(() => { setRole("manager"); }, [setRole]);
-
+  const role = useRole((s) => s.role);
+  console.log("PROJECT PAGE ROLE:", role);
   return (
     <AppShell>
       <div className="space-y-6 max-w-7xl">

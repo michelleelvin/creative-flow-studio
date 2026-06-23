@@ -196,7 +196,7 @@ export function TaskRow({
             mode="single"
             selected={taskDeadline}
             onSelect={(d) => d && onUpdate(task.id, { deadline: d.toISOString() })}
-            disabled={(d) => d > projectDeadline}
+            disabled={(d) =>d < new Date(new Date().setHours(0, 0, 0, 0)) ||d > projectDeadline}
             className={cn("p-3 pointer-events-auto")}
             initialFocus
           />

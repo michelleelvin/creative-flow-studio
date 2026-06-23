@@ -5,31 +5,68 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Users as UsersIcon, Briefcase, ShieldAlert, UserPlus, ArrowUpRight, FolderKanban } from "lucide-react";
-import { users, projects, auditEvents } from "@/data/mock";
+import { supabase } from "@/lib/supabase";
+import { useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useRole } from "@/stores/role";
 
 export const Route = createFileRoute("/admin")({ component: AdminDashboard });
-
 function AdminDashboard() {
   const setRole = useRole((s) => s.setRole);
-  useEffect(() => { setRole("admin"); }, [setRole]);
+  const [employees, setEmployees] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [auditEvents, setAuditEvents] = useState<any[]>([]);
+  console.log(projects);
+  useEffect(() => {
+  setRole("admin");
 
-  const employees = useMemo(() => users.filter((u) => u.role !== "admin"), []);
-  const activeEmployees = employees.filter((u) => u.status === "active");
+  async function loadData() {
+    const { data: employeesData } = await supabase
+      .from("profiles")
+      .select("*");
+
+    const { data: projectsData } = await supabase
+      .from("projects")
+      .select("*");
+
+    setEmployees(employeesData || []);
+    setProjects(projectsData || []);
+  }
+
+  loadData();
+}, [setRole]);
+  const activeEmployees = employees;
+
 
   // Aggregate clients from deliverables
   const clients = useMemo(() => {
-    const map = new Map<string, { name: string; projects: number; activeProjects: number }>();
-    for (const p of projects) {
-      const c = map.get(p.client) ?? { name: p.client, projects: 0, activeProjects: 0 };
-      c.projects += 1;
-      if (p.progress < 100) c.activeProjects += 1;
-      map.set(p.client, c);
+  const map = new Map();
+
+  projects.forEach((p) => {
+    const clientName = p.client;
+
+    if (!clientName) return;
+
+    if (!map.has(clientName)) {
+      map.set(clientName, {
+        name: clientName,
+        projects: 0,
+        activeProjects: 0,
+      });
     }
-    return Array.from(map.values()).sort((a, b) => b.projects - a.projects);
-  }, []);
+
+    const client = map.get(clientName);
+
+    client.projects++;
+
+    if (p.progress < 100) {
+      client.activeProjects++;
+    }
+  });
+
+  return Array.from(map.values());
+}, [projects]);
 
   const security = auditEvents
     .filter((e) => ["USER_LOGIN", "ROLE_CHANGED"].includes(e.action))
@@ -80,12 +117,12 @@ function AdminDashboard() {
               {employees.slice(0, 7).map((u) => (
                 <li key={u.id} className="py-2.5 flex items-center gap-3">
                   <Avatar className="size-8">
-                    <AvatarImage src={u.avatar} />
-                    <AvatarFallback>{u.name[0]}</AvatarFallback>
+                    <AvatarImage src={u.avatar_url} />
+                    <AvatarFallback>{u.full_name[0]}</AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium truncate">{u.name}</div>
-                    <div className="text-xs text-muted-foreground truncate">{u.position} · {u.department}</div>
+                    <div className="text-sm font-medium truncate">{u.full_name}</div>
+                    <div className="text-xs text-muted-foreground truncate">{u.email} · {u.role}</div>
                   </div>
                   <span className={cn(
                     "text-[11px] px-1.5 py-0.5 rounded-full border",
@@ -134,7 +171,7 @@ function AdminDashboard() {
                   <div className={cn("mt-1 size-1.5 rounded-full", e.action === "ROLE_CHANGED" ? "bg-status-overdue" : "bg-status-review")} />
                   <div className="min-w-0 flex-1">
                     <div className="truncate">
-                      <span className="font-medium">{u.name}</span>{" "}
+                      <span className="font-medium">{u.full_name}</span>{" "}
                       <span className="text-muted-foreground">— {e.action.replace(/_/g, " ").toLowerCase()}</span>
                     </div>
                     <div className="text-xs text-muted-foreground">{e.ip} · {formatDistanceToNow(new Date(e.ts), { addSuffix: true })}</div>

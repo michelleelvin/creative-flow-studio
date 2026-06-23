@@ -13,7 +13,8 @@ import {
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Search, Plus, MoreHorizontal, Copy, Pencil, Trash2, Eye } from "lucide-react";
 import { useRoles } from "@/stores/roles";
-import { EMPLOYEES } from "@/data/mockRoles";
+import { useEffect } from "react";
+import { supabase } from "@/lib/supabase";
 import { toast } from "sonner";
 import { DeleteRoleDialog } from "@/components/roles/DeleteRoleDialog";
 import { cn } from "@/lib/utils";
@@ -26,31 +27,36 @@ function RolesList() {
   const roles = useRoles((s) => s.roles).filter((r) => !r.archived);
   const cloneRole = useRoles((s) => s.cloneRole);
   const navigate = useNavigate();
+  const [employees, setEmployees] = useState<any[]>([]);
 
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<SortKey>("name");
   const [deleteRoleId, setDeleteRoleId] = useState<string | null>(null);
 
   const rows = useMemo(() => {
-    const flat = roles.flatMap((r) =>
-      r.assignedIds
-        .map((id) => EMPLOYEES.find((e) => e.id === id))
-        .filter(Boolean)
-        .map((e) => ({ employee: e!, role: r })),
-    );
-    let list = flat;
+    let list = [...employees];
+
     if (query.trim()) {
       const q = query.toLowerCase();
+
       list = list.filter(
-        ({ employee, role }) =>
-          employee.name.toLowerCase().includes(q) || role.name.toLowerCase().includes(q),
+        (e) =>
+          e.name?.toLowerCase().includes(q) ||
+          e.email?.toLowerCase().includes(q) ||
+          e.position?.toLowerCase().includes(q)
       );
     }
-    const sorted = [...list];
-    if (sort === "name") sorted.sort((a, b) => a.employee.name.localeCompare(b.employee.name));
-    if (sort === "role") sorted.sort((a, b) => a.role.name.localeCompare(b.role.name));
-    return sorted;
-  }, [roles, query, sort]);
+
+    if (sort === "name") {
+      list.sort((a, b) => a.name.localeCompare(b.name));
+    }
+
+    if (sort === "role") {
+      list.sort((a, b) => a.position.localeCompare(b.position));
+    }
+
+    return list;
+  }, [employees, query, sort]);
 
   const onClone = (id: string) => {
     const rec = cloneRole(id);
@@ -58,6 +64,20 @@ function RolesList() {
     toast.success(`Cloned. Customize and save.`);
     navigate({ to: "/employees/roles/$id", params: { id: rec.id } });
   };
+  useEffect(() => {
+    async function loadEmployees() {
+      const { data, error } = await supabase
+        .from("users")
+        .select("*");
+
+      console.log("EMPLOYEES:", data);
+      console.log("EMPLOYEE ERROR:", error);
+
+      setEmployees(data || []);
+    }
+
+    loadEmployees();
+  }, []);
 
   return (
     <div className="space-y-5">
@@ -102,26 +122,26 @@ function RolesList() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map(({ employee, role }) => (
+                {rows.map((employee) => (
                   <tr
-                    key={`${role.id}-${employee.id}`}
+                    key={employee.id}
                     className={cn("border-b last:border-b-0 hover:bg-muted/30 cursor-pointer")}
-                    onClick={() => navigate({ to: "/employees/roles/$id", params: { id: role.id } })}
+                    onClick={() => navigate({ to: "/employees/roles/$id", params: { id: employee.id } })}
                   >
                     <td className="px-4 py-3 align-middle">
                       <div className="flex items-center gap-2.5">
                         <Avatar className="size-7">
-                          <AvatarImage src={employee.avatar} />
-                          <AvatarFallback>{employee.name[0]}</AvatarFallback>
+                          <AvatarImage src={employee.avatar_url} />
+                          <AvatarFallback>{(employee.full_name || employee.name || employee.email)?.charAt(0).toUpperCase()}</AvatarFallback>
                         </Avatar>
                         <div className="min-w-0">
-                          <div className="font-medium truncate">{employee.name}</div>
-                          <div className="text-[11px] text-muted-foreground truncate">{employee.email}</div>
+                          <div className="font-medium truncate">{employee.full_name}</div>
+                          <div className="text-[11px] text-muted-foreground truncate">{employee.name}</div>
                         </div>
                       </div>
                     </td>
                     <td className="px-4 py-3 align-middle">
-                      <span className="text-muted-foreground">{role.name}</span>
+                      <span className="text-muted-foreground">{employee.position}</span>
                     </td>
                     <td className="px-4 py-3 align-middle text-right" onClick={(e) => e.stopPropagation()}>
                       <DropdownMenu>
@@ -129,22 +149,22 @@ function RolesList() {
                           <Button variant="ghost" size="icon" className="size-8"><MoreHorizontal className="size-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => navigate({ to: "/employees/roles/$id", params: { id: role.id } })}>
+                          <DropdownMenuItem onClick={() => navigate({ to: "/employees/roles/$id", params: { id: employee.id } })}>
                             <Eye className="size-4" /> View Role
                           </DropdownMenuItem>
                           <DropdownMenuItem
-                            onClick={() => navigate({ to: "/employees/roles/$id", params: { id: role.id }, search: { edit: true } as never })}
+                            onClick={() => navigate({ to: "/employees/roles/$id", params: { id: employee.id }, search: { edit: true } as never })}
                           >
                             <Pencil className="size-4" /> Edit Role
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => onClone(role.id)}>
+                          <DropdownMenuItem onClick={() => onClone(employee.id)}>
                             <Copy className="size-4" /> Clone Role
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
-                            disabled={role.type === "system"}
+                            disabled={false}
                             className="text-destructive focus:text-destructive"
-                            onClick={() => setDeleteRoleId(role.id)}
+                            onClick={() => setDeleteRoleId(employee.id)}
                           >
                             <Trash2 className="size-4" /> Delete Role
                           </DropdownMenuItem>

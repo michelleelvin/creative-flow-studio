@@ -4,14 +4,16 @@ import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Play, Pause, CheckCircle2, LogOut, FolderCheck, FileVideo, FileImage, FileText, FileAudio, Check, UploadCloud } from "lucide-react";
-import { tasks, projects, currentEmployee, productivityByDay } from "@/data/mock";
+import { tasks, projects, productivityByDay } from "@/data/mock";
 import { myProjects } from "@/data/myTasks";
+import { getTasks } from "@/lib/tasks";
 import { useActiveTask } from "@/hooks/useActiveTask";
 import { useRole } from "@/stores/role";
 import { StatusBadge, PriorityChip } from "@/components/badges";
 import type { TaskStatus } from "@/data/mock";
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { formatDistanceToNow } from "date-fns";
+import { supabase } from "@/lib/supabase";
 
 export const Route = createFileRoute("/employee")({ component: EmployeeDashboard });
 
@@ -30,7 +32,64 @@ function greeting() {
 
 function EmployeeDashboard() {
   const setRole = useRole((s) => s.setRole);
-  useEffect(() => { setRole("employee"); }, [setRole]);
+  const setTasks = useActiveTask((s) => s.setTasks);
+
+  const [userName, setUserName] = useState("");
+
+  useEffect(() => {
+    setRole("employee");
+
+    const loadTasks = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (user?.email) {
+        const { data: appUser } = await supabase
+          .from("users")
+          .select("name")
+          .eq("email", user.email)
+          .single();
+
+        if (appUser) {
+          setUserName(appUser.name);
+          console.log("LOGGED IN USER:", appUser.name);
+        }
+      }
+
+      const dbTasks = await getTasks();
+
+      console.log("DB TASKS:", dbTasks);
+
+      setTasks(
+        dbTasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description ?? "",
+          priority: t.priority,
+          deadline: t.deadline,
+          projectId: t.project_id ?? "general",
+
+          lifecycle:
+            t.status === "assigned"
+              ? "assigned"
+              : t.status === "in_progress"
+              ? "in_progress"
+              : t.status === "paused"
+              ? "paused"
+              : t.status === "review"
+              ? "review"
+              : t.status === "revision"
+              ? "revision"
+              : "done",
+
+          accumulatedMin: t.time_spent_minutes ?? 0,
+        }))
+      );
+    };
+
+    loadTasks();
+  }, [setRole, setTasks]);
 
   const myTasksAll = useActiveTask((s) => s.tasks);
   const myTasks = myTasksAll.slice(0, 6);
@@ -38,6 +97,7 @@ function EmployeeDashboard() {
   const revision = myTasksAll.filter((t) => t.lifecycle === "revision");
 
   const [tick, setTick] = useState(0);
+
   useEffect(() => {
     const id = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(id);
@@ -48,7 +108,7 @@ function EmployeeDashboard() {
       <div className="space-y-6 max-w-7xl">
         <div>
           {(() => { const g = greeting(); return (
-            <h1 className="text-2xl font-semibold tracking-tight">{g.emoji} {g.text}, {currentEmployee.name.split(" ")[0]}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{g.emoji} {g.text}, {userName.split(" ")[0]}</h1>
           ); })()}
           <p className="text-sm text-muted-foreground">Here’s what you’re working on today.</p>
         </div>
@@ -196,9 +256,76 @@ function EmployeeDashboard() {
                   {active && <span className="font-mono text-sm tabular">{fmt(t.accumulatedMin + Math.floor(tick / 60))}</span>}
                   <div className="flex items-center gap-1.5">
                     {active ? (
-                      <Button size="sm" variant="outline"><Pause className="size-3.5" />Pause</Button>
+                      <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={async () => {
+                            const { data, error } = await supabase
+                              .from("tasks")
+                              .update({
+                                status: "in_progress",
+                              })
+                              .eq("id", t.id)
+                              .select();
+
+                            console.log("UPDATED:", data);
+                            console.log("ERROR:", error);
+
+                            if (error) {
+                              console.error(error);
+                              toast.error("Failed to pause task");
+                              return;
+                            }
+
+                            toast.success("Task paused");
+
+                            window.location.reload();
+                          }}
+                        >
+                          <Pause className="size-3.5" />
+                          Pause
+                        </Button>
                     ) : (
-                      <Button size="sm" variant="outline" disabled={t.lifecycle === "done"}><Play className="size-3.5" />{t.accumulatedMin > 0 ? "Resume" : "Start"}</Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={t.lifecycle === "done"}
+                        onClick={async () => {
+                          console.log("BUTTON CLICKED");
+                          console.log("TASK:", t);
+                          const newStatus =
+                            t.lifecycle === "paused"
+                              ? "in_progress"
+                              : "in_progress";
+
+                          console.log("ABOUT TO UPDATE");    
+                          const { data, error } = await supabase
+                            .from("tasks")
+                            .update({
+                              status: newStatus,
+                            })
+                            .eq("id", t.id)
+                            .select();
+
+                          console.log("UPDATE DATA:", data);
+                          console.log("UPDATE ERROR:", error);
+
+                          console.log("Updating task:", t.id, "to", newStatus);  
+
+                          if (error) {
+                            console.error("UPDATE ERROR:", error);
+                            toast.error("Failed to start task");
+                            return;
+                          }
+
+                          toast.success(t.lifecycle === "paused"? "Task resumed": "Task started");
+
+                          window.location.reload();
+                        }}
+                      >
+                        <Play className="size-3.5" />
+                        {t.accumulatedMin > 0 ? "Resume" : "Start"}
+                      </Button>
                     )}
                     {active && (
                       <Button size="sm"><CheckCircle2 className="size-3.5" />Mark Ready</Button>

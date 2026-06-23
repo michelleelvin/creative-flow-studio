@@ -4,10 +4,28 @@ import { Button } from "@/components/ui/button";
 import { PriorityChip } from "@/components/badges";
 import { Film, Image as ImageIcon, ArrowRight, Clock } from "lucide-react";
 import { formatDistanceToNow, differenceInDays } from "date-fns";
-import { incomingProjects } from "@/data/mockSetup";
 import { cn } from "@/lib/utils";
+import { useProjects } from "@/hooks/useProjects";
 
 export function IncomingProjectsStrip() {
+  const { projects = [], loading } = useProjects();
+
+  if (loading) {
+    return (
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+          Incoming projects
+        </h2>
+        <Card className="p-4">Loading projects...</Card>
+      </section>
+    );
+  }
+
+
+  const incomingProjects = projects.filter(
+    (p) => p.status === "incoming"
+  );
+
   if (incomingProjects.length === 0) return null;
 
   const isBanner = incomingProjects.length === 1;
@@ -24,6 +42,7 @@ export function IncomingProjectsStrip() {
           </p>
         </div>
       </div>
+
       <div
         className={cn(
           isBanner
@@ -32,9 +51,19 @@ export function IncomingProjectsStrip() {
         )}
       >
         {incomingProjects.map((p) => {
-          const days = differenceInDays(new Date(p.deadline), new Date());
-          const tight = days < 3;
           const Icon = p.type === "video" ? Film : ImageIcon;
+
+          const deadline = p.deadline
+            ? new Date(p.deadline)
+            : new Date();
+
+          const receivedAt = p.received_at
+            ? new Date(p.received_at)
+            : new Date();
+
+          const days = differenceInDays(deadline, new Date());
+          const tight = days < 3;
+
           return (
             <Card
               key={p.id}
@@ -48,29 +77,49 @@ export function IncomingProjectsStrip() {
                   <div className="size-9 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
                     <Icon className="size-4" />
                   </div>
+
                   <div className="min-w-0">
-                    <div className="font-semibold text-sm truncate">{p.name}</div>
-                    <div className="text-xs text-muted-foreground truncate">{p.client}</div>
+                    <div className="font-semibold text-sm truncate">
+                      {p.name}
+                    </div>
+
+                    <div className="text-xs text-muted-foreground truncate">
+                      {p.client}
+                    </div>
                   </div>
                 </div>
-                <PriorityChip priority={p.priority} />
+
+                <PriorityChip
+                  priority={(p.priority || "medium") as any}
+                />
               </div>
+
               <div className="flex items-center gap-3 text-xs text-muted-foreground">
                 <span className="inline-flex items-center gap-1">
                   <Clock className="size-3" />
-                  Received {formatDistanceToNow(new Date(p.receivedAt), { addSuffix: true })}
+                  Received{" "}
+                  {formatDistanceToNow(receivedAt, {
+                    addSuffix: true,
+                  })}
                 </span>
-                <span className={cn(tight && "text-status-overdue font-medium")}>
+
+                <span
+                  className={cn(
+                    tight && "text-status-overdue font-medium"
+                  )}
+                >
                   Due in {days}d
                 </span>
               </div>
               <Link
                 to="/projects/$id/setup"
-                params={{ id: p.id }}
-                className="mt-auto"
+                params={{ id: String(p.id) }}
               >
+                
                 <Button size="sm" className="w-full">
-                  Set Up & Assign <ArrowRight className="size-3.5" />
+                  Set Up & Assign
+                  <ArrowRight className="size-3.5" />
+                  
                 </Button>
               </Link>
             </Card>

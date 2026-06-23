@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Card } from "@/components/ui/card";
+import { supabase } from "@/lib/supabase";
 import { Button } from "@/components/ui/button";
 import {
   Gamepad2,
@@ -60,22 +61,45 @@ const GAMES: GameMeta[] = [
   },
 ];
 
-type Teammate = { name: string; status: "online" | "away" | "offline" };
-const TEAMMATES: Teammate[] = [
-  { name: "Mira", status: "online" },
-  { name: "Aiden", status: "online" },
-  { name: "Priya", status: "away" },
-  { name: "Leo", status: "online" },
-  { name: "Zara", status: "offline" },
-];
+type Teammate = {
+  id: string;
+  name: string;
+  status: "online" | "away" | "offline";
+};
 
 function GamesPage() {
   const setRole = useRole((s) => s.setRole);
+
+  const [teammates, setTeammates] = useState<Teammate[]>([]);
+  const [open, setOpen] = useState<GameId | null>(null);
+
   useEffect(() => {
     setRole("employee");
   }, [setRole]);
+  useEffect(() => {
+  async function loadEmployees() {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, role")
+      .eq("role", "employee");
 
-  const [open, setOpen] = useState<GameId | null>(null);
+    alert(JSON.stringify(error));
+    console.log("EMPLOYEES:", data);
+    console.log("EMPLOYEE ERROR:", error);
+
+    if (data) {
+      setTeammates(
+        data.map((emp) => ({
+          id: emp.id,
+          name: emp.full_name,
+          status: "online" as const,
+        }))
+      );
+    }
+  }
+
+  loadEmployees();
+}, []);
   const active = GAMES.find((g) => g.id === open) ?? null;
 
   return (
@@ -105,7 +129,11 @@ function GamesPage() {
         {!active ? (
           <AppGrid onOpen={setOpen} />
         ) : (
-          <GameLauncher game={active} onBack={() => setOpen(null)} />
+          <GameLauncher
+              game={active}
+              onBack={() => setOpen(null)}
+              teammates={teammates}
+          />
         )}
       </div>
     </AppShell>
@@ -238,7 +266,15 @@ type Invite = {
 
 type Phase = "intro" | "lobby" | "countdown" | "playing";
 
-function GameLauncher({ game, onBack }: { game: GameMeta; onBack: () => void }) {
+function GameLauncher({
+  game,
+  onBack,
+  teammates,
+}: {
+  game: GameMeta;
+  onBack: () => void;
+  teammates: Teammate[];
+}) {
   const [phase, setPhase] = useState<Phase>("intro");
   const [count, setCount] = useState(3);
   const [invite, setInvite] = useState<Invite>({ teammate: null, status: "idle" });
@@ -314,6 +350,7 @@ function GameLauncher({ game, onBack }: { game: GameMeta; onBack: () => void }) 
           invite={invite}
           setInvite={setInvite}
           onStart={beginCountdown}
+          teammates={teammates}
         />
       ) : (
         <div className="space-y-3">
@@ -336,20 +373,23 @@ function Lobby({
   invite,
   setInvite,
   onStart,
+  teammates,
 }: {
   game: GameMeta;
   invite: Invite;
   setInvite: (i: Invite) => void;
   onStart: () => void;
+  teammates: Teammate[];
 }) {
+  console.log(teammates);
   const sortedTeammates = useMemo(
-    () =>
-      [...TEAMMATES].sort((a, b) => {
-        const order = { online: 0, away: 1, offline: 2 } as const;
-        return order[a.status] - order[b.status];
-      }),
-    [],
-  );
+  () =>
+    [...teammates].sort((a, b) => {
+      const order = { online: 0, away: 1, offline: 2 } as const;
+      return order[a.status] - order[b.status];
+    }),
+  [teammates],
+);
 
   return (
     <div className="grid md:grid-cols-2 gap-5">

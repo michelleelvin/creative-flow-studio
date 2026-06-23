@@ -11,6 +11,7 @@ import {
   Play, Pause, Timer,
 } from "lucide-react";
 import { useActiveTask } from "@/hooks/useActiveTask";
+import { supabase } from "@/lib/supabase";
 import { myProjects } from "@/data/myTasks";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -31,13 +32,7 @@ interface BriefAsset {
   kind: "doc" | "image" | "video" | "archive";
 }
 
-const MOCK_ASSETS: BriefAsset[] = [
-  { name: "Creative_Brief_v3.pdf", size: "1.2 MB", kind: "doc" },
-  { name: "Brand_Guidelines.pdf", size: "4.8 MB", kind: "doc" },
-  { name: "Hero_Reference.jpg", size: "2.1 MB", kind: "image" },
-  { name: "Raw_Footage_A001.mp4", size: "612 MB", kind: "video" },
-  { name: "Logo_Pack.zip", size: "8.4 MB", kind: "archive" },
-];
+
 
 const ICONS = {
   doc: FileText, image: ImageIcon, video: Film, archive: FileArchive,
@@ -45,19 +40,41 @@ const ICONS = {
 
 function TaskDetailPage() {
   const { taskId } = Route.useParams();
+  console.log("CURRENT TASK ID:", taskId);
   const navigate = useNavigate();
   const task = useActiveTask((s) => s.tasks.find((t) => t.id === taskId));
   const submitForReview = useActiveTask((s) => s.submitForReview);
 
-  const project = useMemo(
-    () => task ? myProjects.find((p) => p.id === task.projectId) : undefined,
-    [task],
-  );
+  const project = {
+    name: "Project",
+    stage: "Active",
+    type: "video",
+  };
 
   const [files, setFiles] = useState<File[]>([]);
+  const [sourceAssets, setSourceAssets] = useState<any[]>([]);
+  const [taskAssets, setTaskAssets] = useState<any[]>([]);
   const [note, setNote] = useState("");
   const [dragOver, setDragOver] = useState(false);
+  useEffect(() => {
+  async function loadAssets() {
+    const { data: sourceData } = await supabase
+      .from("source_assets")
+      .select("*")
+      .eq("task_id", taskId);
 
+    setSourceAssets(sourceData || []);
+
+    const { data: taskData } = await supabase
+      .from("task_assets")
+      .select("*")
+      .eq("task_id", taskId);
+
+    setTaskAssets(taskData || []);
+  }
+
+  loadAssets();
+}, [taskId]);
   // Timer
   const [running, setRunning] = useState(false);
   const [accumMs, setAccumMs] = useState(0);
@@ -76,12 +93,22 @@ function TaskDetailPage() {
     const sec = s % 60;
     return `${h.toString().padStart(2, "0")}:${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
   };
-  const toggleTimer = () => {
+  const toggleTimer = async () => {
     if (running) {
+      await supabase
+        .from("tasks")
+        .update({ status: "paused" })
+        .eq("id", taskId);
+
       setAccumMs((a) => a + (runStart ? Date.now() - runStart : 0));
       setRunStart(null);
       setRunning(false);
     } else {
+      await supabase
+        .from("tasks")
+        .update({ status: "in_progress" })
+        .eq("id", taskId);
+
       setRunStart(Date.now());
       setRunning(true);
     }
@@ -94,7 +121,7 @@ function TaskDetailPage() {
     if (dropped.length) setFiles((prev) => [...prev, ...dropped]);
   }, []);
 
-  if (!task || !project) {
+  if (!task) {
     return (
       <AppShell>
         <div className="max-w-3xl mx-auto py-16 text-center space-y-4">
@@ -107,14 +134,66 @@ function TaskDetailPage() {
     );
   }
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!files.length) {
       toast.error("Drop at least one file before submitting");
       return;
     }
-    submitForReview(task.id, note, files.map((f) => f.name));
-    toast.success("Submitted for internal review");
-    navigate({ to: "/my-tasks" });
+
+    try {
+      for (const file of files) {
+        const filePath = `${taskId}/${Date.now()}-${file.name}`;
+
+        const { error: uploadError } = await supabase.storage
+          .from("task-assets")
+          .upload(filePath, file);
+
+        if (uploadError) {
+          console.error("UPLOAD ERROR:", uploadError);
+          throw uploadError;
+        }
+
+        const { data } = supabase.storage
+          .from("task-assets")
+          .getPublicUrl(filePath);
+
+        const { data: inserted, error: insertError } = await supabase
+          .from("task_assets")
+          .insert({
+            task_id: taskId,
+            file_name: file.name,
+            file_url: data.publicUrl,
+          })
+          .select();
+
+        console.log("TASK_ASSETS INSERTED:", inserted);
+        console.log("TASK_ASSETS ERROR:", insertError);
+
+        if (insertError) {
+          throw insertError;
+        }
+      }
+
+      await supabase
+        .from("tasks")
+        .update({
+          status: "review",
+        })
+        .eq("id", taskId);
+
+      toast.success("Submitted for Review");
+      const { data: refreshedTaskAssets } = await supabase
+        .from("task_assets")
+        .select("*")
+        .eq("task_id", taskId);
+
+      setTaskAssets(refreshedTaskAssets || []);
+
+      navigate({ to: "/my-tasks" });
+    } catch (err) {
+      console.error("SUBMIT ERROR:", err);
+      toast.error("Upload failed");
+    }
   };
 
   return (
@@ -189,48 +268,102 @@ function TaskDetailPage() {
               <div className="rounded-lg border bg-muted/30 p-4 space-y-3 text-sm leading-relaxed">
                 <p>
                   <span className="font-semibold">Objective: </span>
-                  Deliver a polished {project.type === "video" ? "video edit" : "design set"} that reflects
-                  the brand's premium positioning while remaining approachable for a broader audience.
+                  {task.objective || "No objective provided."}
                 </p>
+
                 <p>
                   <span className="font-semibold">Tone: </span>
-                  Confident, clean, modern. Avoid heavy stylization.
+                  {task.tone || "No tone specified."}
                 </p>
+
                 <p>
                   <span className="font-semibold">Deliverables: </span>
-                  {project.type === "video"
-                    ? "One 60s master cut + 9:16 vertical and 1:1 square cutdowns."
-                    : "Hero key visual + 3 social variants (1:1, 4:5, 9:16)."}
+                  {task.deliverable || "No deliverables specified."}
                 </p>
                 <p className="text-muted-foreground italic">
+
                   Notes: Maintain the approved color palette. Use only licensed assets supplied below.
+
                 </p>
               </div>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <h3 className="text-sm font-semibold">Source Assets</h3>
-                  <span className="text-xs text-muted-foreground">{MOCK_ASSETS.length} files</span>
+                  <span className="text-xs text-muted-foreground">
+                    {sourceAssets.length} files
+                  </span>
                 </div>
                 <ul className="divide-y rounded-lg border overflow-hidden">
-                  {MOCK_ASSETS.map((a) => {
-                    const Icon = ICONS[a.kind];
+                  {sourceAssets.map((a) => {
+                    const Icon = FileText;
                     return (
                       <li key={a.name} className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/50 transition-colors">
                         <div className="size-8 rounded-md bg-muted grid place-items-center shrink-0">
                           <Icon className="size-4 text-muted-foreground" />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="text-sm font-medium truncate">{a.name}</p>
-                          <p className="text-xs text-muted-foreground">{a.size}</p>
+                          <p className="text-sm font-medium truncate">
+                            {a.file_name}
+                          </p>
+
+                          <p className="text-xs text-muted-foreground">
+                            Uploaded asset
+                          </p>
                         </div>
-                        <Button variant="ghost" size="sm" className="h-8">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8"
+                          onClick={() => window.open(a.file_url, "_blank")}
+                        >
                           <Download className="size-3.5" />
                         </Button>
                       </li>
                     );
                   })}
                 </ul>
+                <div className="space-y-2 mt-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">Submitted Work</h3>
+
+                    <span className="text-xs text-muted-foreground">
+                      {taskAssets.length} files
+                    </span>
+                  </div>
+
+                  <ul className="divide-y rounded-lg border overflow-hidden">
+                    {taskAssets.map((a) => (
+                      <li
+                        key={a.id}
+                        className="flex items-center gap-3 px-3 py-2.5 hover:bg-accent/50 transition-colors"
+                      >
+                        <div className="size-8 rounded-md bg-muted grid place-items-center shrink-0">
+                          <FileText className="size-4 text-muted-foreground" />
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium truncate">
+                            {a.file_name}
+                          </p>
+
+                          <p className="text-xs text-muted-foreground">
+                            Submitted by employee
+                          </p>
+                        </div>
+
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8"
+                          onClick={() => window.open(a.file_url, "_blank")}
+                        >
+                          <Download className="size-3.5" />
+                        </Button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               </div>
             </CardContent>
           </Card>

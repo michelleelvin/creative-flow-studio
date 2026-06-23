@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { supabase } from "@/lib/supabase";
 import {
   Search, Coffee, Keyboard,
 } from "lucide-react";
@@ -16,6 +17,8 @@ import { TasksBoard } from "@/components/tasks/TasksBoard";
 import { SubmitModal } from "@/components/tasks/SubmitModal";
 import { TaskFilters, EMPTY_FILTERS, type FilterState } from "@/components/tasks/TaskFilters";
 import { useActiveTask } from "@/hooks/useActiveTask";
+import { getTasks } from "@/lib/tasks";
+
 import { myProjects, type MyTask, type MyProjectType } from "@/data/myTasks";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -35,6 +38,7 @@ const PRIORITY_RANK = { critical: 0, high: 1, medium: 2, low: 3 } as const;
 
 function MyTasksPage() {
   const tasks = useActiveTask((s) => s.tasks);
+  const setTasks = useActiveTask((s) => s.setTasks);
   const submitForReview = useActiveTask((s) => s.submitForReview);
   const pendingSwitchId = useActiveTask((s) => s.pendingSwitchId);
   const setPendingSwitch = useActiveTask((s) => s.setPendingSwitch);
@@ -42,30 +46,123 @@ function MyTasksPage() {
   const startTask = useActiveTask((s) => s.startTask);
   const pauseTask = useActiveTask((s) => s.pauseTask);
   const navigate = useNavigate();
+  const [userRole, setUserRole] = useState<string>("");
+  const [teammates, setTeammates] = useState<Teammate[]>([]);
+  useEffect(() => {
+  async function loadEmployees() {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id, full_name, status") 
+      .eq("role", "employee");
 
-  const [loading, setLoading] = useState(true);
-  useEffect(() => { const t = setTimeout(() => setLoading(false), 400); return () => clearTimeout(t); }, []);
+    console.log("EMPLOYEES:", data);
+    console.log("EMPLOYEE ERROR:", error);
 
-  const [typeFilter, setTypeFilter] = useState<"all" | MyProjectType>("all");
-  const [search, setSearch] = useState("");
-  const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
-  const [sort, setSort] = useState<SortKey>("deadline");
+    if (!error && data) {
+      setTeammates(
+        data.map((emp) => ({
+          id: emp.id,
+          name: emp.full_name,
+          status:
+            emp.status === "active"
+              ? "online"
+              : "offline",
+        }))
+      );
+    }
+  }
 
-  const [submitTask, setSubmitTask] = useState<MyTask | null>(null);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  loadEmployees();
+}, []);
+const [loading, setLoading] = useState(true);
+
+useEffect(() => {
+  async function loadTasks() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return;
+
+    const { data: userRecord } = await supabase
+    .from("users")
+    .select("department")
+    .eq("email", user.email)
+    .single();
+
+  const userRole = userRecord?.department ?? "";
+    setUserRole(userRole || "");
+
+    const data = await getTasks();
+
+    let filteredData = data;
+
+    if (userRole?.toLowerCase() === "graphic designer") {
+      filteredData = data.filter(
+        (task: any) => task.deliverable_type === "static"
+      );
+    }
+
+    if (userRole?.toLowerCase() === "video producer") {
+  filteredData = data.filter(
+    (task: any) =>
+      task.deliverable_type === "edit" ||
+      task.deliverable_type === "shoot"
+  );
+}
+
+    const mappedTasks = filteredData.map((task: any) => ({
+      id: task.id,
+      title: task.title,
+      projectId: task.project_id ?? "",
+      lifecycle: task.status,
+      priority: task.priority,
+      deadline: task.deadline,
+      accumulatedMin: task.time_spent_minutes ?? 0,
+      objective: task.objective,
+      deliverable: task.deliverable,
+      tone: task.tone,
+      description: task.description,
+      deliverable_type: task.deliverable_type,
+      comments: 0,
+      attachments: 0,
+      revisions: 0,
+    }));
+
+    setTasks(mappedTasks);
+    setLoading(false);
+  }
+
+  loadTasks();
+}, []);
+
+const [typeFilter, setTypeFilter] =
+  useState<"all" | "edit" | "shoot" | "static">("all");
+const [search, setSearch] = useState("");
+const [filters, setFilters] = useState<FilterState>(EMPTY_FILTERS);
+const [sort, setSort] = useState<SortKey>("deadline");
+
+const [submitTask, setSubmitTask] = useState<MyTask | null>(null);
+const [shortcutsOpen, setShortcutsOpen] = useState(false);
 
   // Filter + sort
   const visible = useMemo(() => {
     let out = tasks;
     if (typeFilter !== "all") {
-      const ids = new Set(myProjects.filter((p) => p.type === typeFilter).map((p) => p.id));
-      out = out.filter((t) => ids.has(t.projectId));
-    }
+  out = out.filter(
+    (t) =>
+      t.deliverable_type?.toLowerCase() ===
+      typeFilter.toLowerCase()
+  );
+}
     if (search.trim()) {
       const q = search.toLowerCase();
       out = out.filter((t) => t.title.toLowerCase().includes(q));
     }
     if (filters.priorities.length) out = out.filter((t) => filters.priorities.includes(t.priority));
+    console.log("Selected filters:", filters.projectIds);
+    console.log("Task projectIds:", out.map(t => t.projectId));
+    console.log("FIRST TASK", tasks?.[0]);
     if (filters.projectIds.length) out = out.filter((t) => filters.projectIds.includes(t.projectId));
     if (filters.deadline !== "any") {
       const now = Date.now();
@@ -134,6 +231,8 @@ function MyTasksPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [tasks, pauseTask, startTask]);
 
+  console.log("USER ROLE:", userRole);
+
   return (
     <AppShell>
       <div className="space-y-4 max-w-[1700px]">
@@ -147,7 +246,7 @@ function MyTasksPage() {
           </div>
 
           <div className="ml-auto flex items-center gap-2 flex-wrap">
-            <SegmentedType value={typeFilter} onChange={setTypeFilter} />
+            <SegmentedType value={typeFilter} onChange={setTypeFilter} role={userRole}/>
             <div className="relative">
               <Search className="size-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -260,12 +359,31 @@ function Shortcut({ keys, desc }: { keys: string[]; desc: string }) {
   );
 }
 
-function SegmentedType({ value, onChange }: { value: "all" | MyProjectType; onChange: (v: "all" | MyProjectType) => void }) {
-  const opts: { v: "all" | MyProjectType; label: string }[] = [
-    { v: "all", label: "All Deliverables" },
-    { v: "video", label: "Video" },
-    { v: "static", label: "Static" },
-  ];
+function SegmentedType({
+  value,
+  onChange,
+  role,
+}: {
+  value: string;
+  onChange: (v: any) => void;
+  role: string;
+}) {
+  const normalizedRole = role?.trim().toLowerCase();
+
+const opts =
+  normalizedRole === "video producer"
+    ? [
+        { v: "edit", label: "Edit" },
+        { v: "shoot", label: "Shoot" },
+      ]
+    : normalizedRole === "content writer" ||
+      normalizedRole === "content creator"
+    ? [
+        { v: "edit", label: "Edit" },
+        { v: "shoot", label: "Shoot" },
+        { v: "static", label: "Static" },
+      ]
+    : [];
   return (
     <div className="inline-flex rounded-md border bg-card p-0.5 text-sm">
       {opts.map((o) => (
@@ -274,7 +392,9 @@ function SegmentedType({ value, onChange }: { value: "all" | MyProjectType; onCh
           onClick={() => onChange(o.v)}
           className={cn(
             "px-3 py-1 rounded transition-colors",
-            value === o.v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+            value === o.v
+              ? "bg-primary text-primary-foreground"
+              : "text-muted-foreground hover:text-foreground"
           )}
         >
           {o.label}

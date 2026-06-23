@@ -9,13 +9,12 @@ import {
   Briefcase, Plus, TrendingUp, DollarSign, Users as UsersIcon, FolderKanban,
   ArrowUpRight, Search,
 } from "lucide-react";
-import { projects as seedProjects, users } from "@/data/mock";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/stores/role";
 import { cn } from "@/lib/utils";
 import {
   AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from "recharts";
-
 export const Route = createFileRoute("/clients")({ component: ClientsPage });
 
 interface ClientRow {
@@ -35,17 +34,32 @@ function hash(s: string) {
 
 function ClientsPage() {
   const setRole = useRole((s) => s.setRole);
+  const [projects, setProjects] = useState<any[]>([]);
+  const allProjects = projects;
+  useEffect(() => {
+  async function loadProjects() {
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*");
+
+    setProjects(data || []);
+    console.log("PROJECTS", data);
+    console.log("PROJECT ERROR", error);
+  }
+
+  loadProjects();
+}, []);
   useEffect(() => { setRole("admin"); }, [setRole]);
 
-  const [extraClients, setExtraClients] = useState<ClientRow[]>([]);
-  const [extraProjects, setExtraProjects] = useState<typeof seedProjects>([]);
+
+
   const [query, setQuery] = useState("");
 
-  const allProjects = useMemo(() => [...seedProjects, ...extraProjects], [extraProjects]);
 
   const baseClients: ClientRow[] = useMemo(() => {
     const map = new Map<string, ClientRow>();
     for (const p of allProjects) {
+      if (!p.client) continue;
       const h = hash(p.client);
       const c = map.get(p.client) ?? {
         name: p.client,
@@ -63,10 +77,7 @@ function ClientsPage() {
     return Array.from(map.values());
   }, [allProjects]);
 
-  const clients = useMemo(
-    () => [...baseClients, ...extraClients].sort((a, b) => b.ytd - a.ytd),
-    [baseClients, extraClients],
-  );
+  const clients = baseClients;
 
   const filtered = clients.filter((c) =>
     c.name.toLowerCase().includes(query.toLowerCase()),
@@ -93,7 +104,7 @@ function ClientsPage() {
   const kpis = [
     { label: "Total MRR", value: `₹${totalMRR}k`, sub: "+8.2% MoM", icon: DollarSign },
     { label: "Revenue YTD", value: `₹${totalYTD}k`, sub: "across all clients", icon: TrendingUp },
-    { label: "Active clients", value: clients.length, sub: `${extraClients.length} new`, icon: UsersIcon },
+    { label: "Active clients",value: clients.length,sub: `${clients.length} total`,icon: UsersIcon,},
     { label: "Active deliverables", value: activeProjects, sub: `${allProjects.length} total`, icon: FolderKanban },
   ];
 
@@ -190,7 +201,7 @@ function ClientsPage() {
               {filtered.map((c) => (
                 <li key={c.name} className="py-3 flex items-center gap-3">
                   <div className="size-9 rounded-md bg-muted grid place-items-center text-xs font-semibold">
-                    {c.name.slice(0, 2).toUpperCase()}
+                    {c.name?.slice(0, 2).toUpperCase() ?? "NA"}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="text-sm font-medium truncate">{c.name}</div>
@@ -223,7 +234,7 @@ function ClientsPage() {
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{p.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{p.client} · {p.type}</div>
+                      <div className="text-xs text-muted-foreground truncate">{p.client} · {p.status}</div>
                     </div>
                     <span className={cn(
                       "text-[11px] tabular shrink-0",

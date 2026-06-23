@@ -12,8 +12,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Checkbox } from "@/components/ui/checkbox";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge, PriorityChip } from "@/components/badges";
-import { tasks as seedTasks, projects, users, VIDEO_STAGES, STATIC_STAGES } from "@/data/mock";
-import type { Task } from "@/data/mock";
+import { supabase } from "@/lib/supabase";
 import { useRole } from "@/stores/role";
 import { formatDistanceToNow } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -26,13 +25,31 @@ import {
 export const Route = createFileRoute("/reviews")({ component: ReviewsPage });
 
 type ReviewTab = "pending" | "revision" | "approved";
+const VIDEO_STAGES = [
+  "Script",
+  "Editing",
+  "Review",
+  "Final",
+];
+
+const STATIC_STAGES = [
+  "Draft",
+  "Design",
+  "Review",
+  "Final",
+];
 
 function ReviewsPage() {
   const setRole = useRole((s) => s.setRole);
-  useEffect(() => { setRole("manager"); }, [setRole]);
 
-  // Local state — start from mock, manager actions mutate locally
-  const [items, setItems] = useState<Task[]>(seedTasks);
+  useEffect(() => {
+    setRole("manager");
+  }, [setRole]);
+
+  const [items, setItems] = useState<any[]>([]);
+  const [projects, setProjects] = useState<any[]>([]);
+  const [employees, setEmployees] = useState<any[]>([]);
+
   const [tab, setTab] = useState<ReviewTab>("pending");
   const [q, setQ] = useState("");
   const [projectFilter, setProjectFilter] = useState<string>("all");
@@ -40,34 +57,113 @@ function ReviewsPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [activeId, setActiveId] = useState<string | null>(null);
 
+  useEffect(() => {
+    async function loadData() {
+      const { data: tasksData, error: tasksError } = await supabase
+        .from("tasks")
+        .select("*");
+
+      const { data: projectsData, error: projectsError } = await supabase
+        .from("projects")
+        .select("*");
+
+      const { data: employeesData, error: employeesError } = await supabase
+        .from("profiles")
+        .select("*")
+        .eq("role", "employee");
+
+      console.log("TASKS:", tasksData);
+      console.log("PROJECTS:", projectsData);
+      console.log("EMPLOYEES:", employeesData);
+
+      console.log("TASK ERROR:", tasksError);
+      console.log("PROJECT ERROR:", projectsError);
+      console.log("EMPLOYEE ERROR:", employeesError);
+
+      setItems(tasksData || []);
+      console.log(tasksData?.[0]);
+      console.log("FIRST TASK", items[0]);
+      setProjects(projectsData || []);
+      setEmployees(employeesData || []);
+      console.log(tasksData?.[0]);
+      console.log(projectsData?.[0]);
+      console.log(employeesData?.[0]);
+    }
+
+    loadData();
+  }, []);
+
   const filtered = useMemo(() => {
-    const tabStatus = tab === "pending" ? "review" : tab === "revision" ? "revision" : "done";
+    const tabStatus =
+      tab === "pending"
+        ? "review"
+        : tab === "revision"
+        ? "revision"
+        : "done";
+
     return items
       .filter((t) => t.status === tabStatus)
-      .filter((t) => projectFilter === "all" || t.projectId === projectFilter)
-      .filter((t) => priorityFilter === "all" || t.priority === priorityFilter)
-      .filter((t) => !q || t.title.toLowerCase().includes(q.toLowerCase()))
-      .sort((a, b) => new Date(a.deadline).getTime() - new Date(b.deadline).getTime());
+      .filter(
+        (t) =>
+          projectFilter === "all" ||
+          t.project_id === projectFilter
+      )
+      .filter(
+        (t) =>
+          priorityFilter === "all" ||
+          t.priority === priorityFilter
+      )
+      .filter(
+        (t) =>
+          !q ||
+          t.title?.toLowerCase().includes(q.toLowerCase())
+      )
+      .sort(
+        (a, b) =>
+          new Date(a.deadline).getTime() -
+          new Date(b.deadline).getTime()
+      );
   }, [items, tab, projectFilter, priorityFilter, q]);
 
-  const counts = useMemo(() => ({
-    pending: items.filter((t) => t.status === "review").length,
-    revision: items.filter((t) => t.status === "revision").length,
-    approved: items.filter((t) => t.status === "done").length,
-  }), [items]);
+  const counts = useMemo(
+    () => ({
+      pending: items.filter((t) => t.status === "review").length,
+      revision: items.filter((t) => t.status === "revision").length,
+      approved: items.filter((t) => t.status === "done").length,
+    }),
+    [items]
+  );
 
   const overdueCount = items.filter(
-    (t) => t.status === "review" && new Date(t.deadline).getTime() < Date.now()
+    (t) =>
+      t.status === "review" &&
+      new Date(t.deadline).getTime() < Date.now()
   ).length;
 
   const avgWait = useMemo(() => {
     const pending = items.filter((t) => t.status === "review");
+
     if (!pending.length) return "—";
-    const avgMs = pending.reduce((s, t) => s + (Date.now() - new Date(t.deadline).getTime() + 3 * 86400_000), 0) / pending.length;
-    return `${Math.max(1, Math.round(avgMs / 3600_000))}h`;
+
+    const avgMs =
+      pending.reduce(
+        (s, t) =>
+          s +
+          (Date.now() -
+            new Date(t.deadline).getTime() +
+            3 * 86400_000),
+        0
+      ) / pending.length;
+
+    return `${Math.max(
+      1,
+      Math.round(avgMs / 3600_000)
+    )}h`;
   }, [items]);
 
-  const active = activeId ? items.find((t) => t.id === activeId) ?? null : null;
+  const active = activeId
+    ? items.find((t) => t.id === activeId) ?? null
+    : null;
 
   function applyAction(ids: string[], action: "approve" | "revision", note?: string) {
     setItems((prev) =>
@@ -216,6 +312,8 @@ function ReviewsPage() {
                       <ReviewRow
                         key={t.id}
                         task={t}
+                        projects={projects}
+                        employees={employees}
                         selectable={tab === "pending"}
                         selected={selected.has(t.id)}
                         onToggle={() => toggle(t.id)}
@@ -234,6 +332,8 @@ function ReviewsPage() {
 
       <ReviewSheet
         task={active}
+        projects={projects}
+        employees={employees}
         onClose={() => setActiveId(null)}
         onApprove={(id) => applyAction([id], "approve")}
         onRevise={(id, note) => applyAction([id], "revision", note)}
@@ -256,9 +356,19 @@ function Kpi({ label, value, icon: Icon, tone, hint }: { label: string; value: n
 }
 
 function ReviewRow({
-  task, selectable, selected, onToggle, onOpen, onApprove, onRevise,
+  task,
+  projects,
+  employees,
+  selectable,
+  selected,
+  onToggle,
+  onOpen,
+  onApprove,
+  onRevise,
 }: {
-  task: Task;
+  task: any;
+  projects: any[];
+  employees: any[];
   selectable: boolean;
   selected: boolean;
   onToggle: () => void;
@@ -266,11 +376,32 @@ function ReviewRow({
   onApprove: () => void;
   onRevise: () => void;
 }) {
-  const project = projects.find((p) => p.id === task.projectId)!;
-  const assignee = users.find((u) => u.id === task.assigneeId)!;
-  const stages = project.type === "video" ? VIDEO_STAGES : STATIC_STAGES;
-  const stageName = stages[task.stage % stages.length];
-  const overdue = new Date(task.deadline).getTime() < Date.now() && task.status !== "done";
+  const project = projects.find(
+    (p) => p.id === task.project_id
+  );
+
+  if (!project) return null;
+
+  const assignee =
+    employees.find(
+      (u) => u.id === task.assignee_id
+    ) || {
+      full_name: "Unknown User",
+      avatar_url: "",
+      department: "",
+    };
+
+  const stages =
+    project.type === "video"
+      ? VIDEO_STAGES
+      : STATIC_STAGES;
+
+  const stageName =
+    stages[(task.stage || 0) % stages.length];
+
+  const overdue =
+    new Date(task.deadline).getTime() < Date.now() &&
+    task.status !== "done";
 
   return (
     <li className={cn("px-4 py-3 flex items-center gap-3 hover:bg-muted/40 transition-colors", selected && "bg-primary/5")}>
@@ -295,16 +426,16 @@ function ReviewRow({
       </button>
 
       <div className="hidden md:flex items-center gap-2 min-w-[160px]">
-        <Avatar className="size-7"><AvatarImage src={assignee.avatar} /><AvatarFallback>{assignee.name[0]}</AvatarFallback></Avatar>
+        <Avatar className="size-7"><AvatarImage src={assignee.avatar_url} /><AvatarFallback> {assignee.full_name?.[0] ?? "U"}</AvatarFallback></Avatar>
         <div className="text-xs">
-          <div className="font-medium truncate max-w-[110px]">{assignee.name}</div>
+          <div className="font-medium truncate max-w-[110px]">{assignee.full_name}</div>
           <div className="text-muted-foreground truncate max-w-[110px]">{assignee.department}</div>
         </div>
       </div>
 
       <div className="hidden lg:flex items-center gap-3 text-xs text-muted-foreground min-w-[140px]">
-        <span className="inline-flex items-center gap-1"><MessageSquare className="size-3.5" />{task.comments}</span>
-        <span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{task.attachments}</span>
+        <span className="inline-flex items-center gap-1"><MessageSquare className="size-3.5" />{task.comments ?? 0}</span>
+        <span className="inline-flex items-center gap-1"><Paperclip className="size-3.5" />{task.attachments ?? 0}</span>
         <span className={cn("inline-flex items-center gap-1", overdue && "text-status-overdue")}>
           <Clock className="size-3.5" />{formatDistanceToNow(new Date(task.deadline), { addSuffix: true })}
         </span>
@@ -336,9 +467,16 @@ function ReviewRow({
 }
 
 function ReviewSheet({
-  task, onClose, onApprove, onRevise,
+  task,
+  projects,
+  employees,
+  onClose,
+  onApprove,
+  onRevise,
 }: {
-  task: Task | null;
+  task: any;
+  projects: any[];
+  employees: any[];
   onClose: () => void;
   onApprove: (id: string) => void;
   onRevise: (id: string, note: string) => void;
@@ -354,8 +492,17 @@ function ReviewSheet({
     );
   }
 
-  const project = projects.find((p) => p.id === task.projectId)!;
-  const assignee = users.find((u) => u.id === task.assigneeId)!;
+  const project = projects.find(
+    (p) => p.id === task.project_id
+  );
+
+  const assignee = employees.find(
+    (u) => u.id === task.assignee_id
+  );
+
+  if (!project || !assignee) {
+    return null;
+  }
   const stages = project.type === "video" ? VIDEO_STAGES : STATIC_STAGES;
   const overdue = new Date(task.deadline).getTime() < Date.now() && task.status !== "done";
 
@@ -392,8 +539,8 @@ function ReviewSheet({
           <div className="grid grid-cols-2 gap-3 text-sm">
             <Meta label="Assignee">
               <div className="flex items-center gap-2">
-                <Avatar className="size-6"><AvatarImage src={assignee.avatar} /><AvatarFallback>{assignee.name[0]}</AvatarFallback></Avatar>
-                <span>{assignee.name}</span>
+                <Avatar className="size-6"><AvatarImage src={assignee.avatar_url} /><AvatarFallback>  {assignee.full_name?.[0] ?? "U"}</AvatarFallback></Avatar>
+                <span>{assignee.full_name}</span>
               </div>
             </Meta>
             <Meta label="Status"><StatusBadge status={task.status} /></Meta>
@@ -403,7 +550,9 @@ function ReviewSheet({
                 {formatDistanceToNow(new Date(task.deadline), { addSuffix: true })}
               </span>
             </Meta>
-            <Meta label="Time logged">{Math.round(task.timeSpentMin / 60 * 10) / 10}h</Meta>
+            <Meta label="Time logged">
+              {(task.time_spent_min ?? 0) / 60}h
+            </Meta>
             <Meta label="Attachments">{task.attachments} files</Meta>
           </div>
 
@@ -414,11 +563,11 @@ function ReviewSheet({
             <div className="text-sm font-medium mb-2">Submission notes</div>
             <Card className="p-3 text-sm bg-muted/40">
               <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1.5">
-                <Avatar className="size-5"><AvatarImage src={assignee.avatar} /><AvatarFallback>{assignee.name[0]}</AvatarFallback></Avatar>
-                <span className="font-medium text-foreground">{assignee.name}</span>
+                <Avatar className="size-5"><AvatarImage src={assignee.avatar_url} /><AvatarFallback>{assignee.full_name?.[0] ?? "U"}</AvatarFallback></Avatar>
+                <span className="font-medium text-foreground">{assignee.full_name}</span>
                 <span>· {formatDistanceToNow(new Date(task.deadline), { addSuffix: true })}</span>
               </div>
-              Submitted v{(task.id.charCodeAt(1) % 3) + 1} with the color pass tweaks you flagged last round. Open to alt cuts on the second half.
+              Submitted v{((task.id?.charCodeAt?.(1) ?? 1) % 3) + 1} with the color pass tweaks you flagged last round. Open to alt cuts on the second half.
             </Card>
           </div>
 

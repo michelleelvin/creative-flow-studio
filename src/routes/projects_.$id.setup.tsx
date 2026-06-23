@@ -10,12 +10,8 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import {
-  incomingProjects,
-  generateTasks,
-  team as initialTeam,
-  type SetupTask,
-} from "@/data/mockSetup";
+import type { SetupTask } from "@/data/mockSetup";
+import { supabase } from "@/lib/supabase";
 import { ProjectBriefHeader } from "@/components/setup/ProjectBriefHeader";
 import { StageGroup } from "@/components/setup/StageGroup";
 import { SetupFooter } from "@/components/setup/SetupFooter";
@@ -33,10 +29,34 @@ import {
 
 export const Route = createFileRoute("/projects_/$id/setup")({
   component: ProjectSetup,
-  loader: ({ params }) => {
-    const project = incomingProjects.find((p) => p.id === params.id);
-    if (!project) throw notFound();
-    return { project };
+
+  loader: async ({ params }) => {
+    console.log("ROUTE HIT", params.id);
+
+    const { data, error } = await supabase
+      .from("projects")
+      .select("*")
+      .eq("id", params.id)
+      .single();
+
+    if (error || !data) {
+      throw notFound();
+    }
+
+    return {
+      project: {
+        ...data,
+        description: data.description || "",
+        tags: data.tags || [],
+        requestedBy: {
+          name: "Manager",
+          avatar: "",
+        },
+        receivedAt: data.created_at,
+        budgetHours: 0,
+        referenceFiles: [],
+      },
+    };
   },
 });
 
@@ -45,29 +65,59 @@ function ProjectSetup() {
   const setRole = useRole((s) => s.setRole);
   const navigate = useNavigate();
   useEffect(() => {
-    setRole("manager");
-  }, [setRole]);
+  async function loadEmployees() {
+    const { data } = await supabase
+      .from("users")
+      .select("*");
+
+    setTeam(data || []);
+  }
+
+  loadEmployees();
+}, []);
 
   const [projectName, setProjectName] = useState(project.name);
-  const [tasks, setTasks] = useState<SetupTask[]>(() => generateTasks(project));
+  const [tasks, setTasks] = useState<SetupTask[]>([]);
+  useEffect(() => {
+  async function loadTasks() {
+    const { data, error } = await supabase
+      .from("project_setup_tasks")
+      .select("*")
+      .eq("project_id", project.id);
+
+    console.log("PROJECT ID:", project.id);
+    console.log("TASKS:", data);
+    console.log("TASK ERROR:", error);
+
+    setTasks(data || []);
+  }
+
+  loadTasks();
+}, [project.id]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const team = initialTeam;
+  const [team, setTeam] = useState<any[]>([]);
   const workload = useWorkloadCalc(team, tasks);
   const projectDeadline = useMemo(() => new Date(project.deadline), [project.deadline]);
 
   const stages = useMemo(() => {
-    const order: string[] = [];
-    const grouped = new Map<string, SetupTask[]>();
-    for (const t of tasks) {
-      if (!grouped.has(t.stage)) {
-        grouped.set(t.stage, []);
-        order.push(t.stage);
-      }
-      grouped.get(t.stage)!.push(t);
-    }
-    return order.map((s) => ({ stage: s, tasks: grouped.get(s)! }));
+    const stageOrder = [
+      "Request Received",
+      "Planning",
+      "Concept/Script",
+      "Raw Assets",
+      "Editing",
+      "Review",
+      "Corrections",
+      "Approval",
+      "Delivered",
+    ];
+
+    return stageOrder.map((stage) => ({
+      stage,
+      tasks: tasks.filter((t) => t.stage === stage),
+    }));
   }, [tasks]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
@@ -164,10 +214,31 @@ function ProjectSetup() {
   };
 
   const handleLaunch = () => setConfirmOpen(true);
-  const confirmLaunch = () => {
+  const confirmLaunch = async () => {
     setConfirmOpen(false);
     const involved = new Set(tasks.map((t) => t.assigneeId).filter(Boolean)).size;
     toast.success(`Project launched — ${tasks.length} tasks assigned to ${involved} teammates.`);
+    await supabase.from("tasks").insert(
+    tasks.map((t) => ({
+      title: t.title,
+      description: t.description,
+      project_id: project.id,
+      assignee_id: t.assigneeId,
+      deadline: t.deadline,
+      status: "todo",
+      priority: t.priority,
+    }))
+  );
+      await supabase
+    .from("projects")
+    .update({
+      status: "active"
+    })
+    .eq("id", project.id);
+    await supabase
+  .from("project_setup_tasks")
+  .delete()
+  .eq("project_id", project.id);
     navigate({ to: "/manager" });
   };
 
@@ -192,6 +263,7 @@ function ProjectSetup() {
             <Button size="sm" variant="ghost">Dismiss</Button>
           </Card>
 
+          
           <div className="space-y-3">
             {stages.map(({ stage, tasks: stageTasks }) => (
               <StageGroup

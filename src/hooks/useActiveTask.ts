@@ -1,23 +1,35 @@
 import { create } from "zustand";
-import { initialMyTasks, type MyTask, type Lifecycle, LEGAL_TRANSITIONS } from "@/data/myTasks";
+import { supabase } from "@/lib/supabase";
+import {
+  type MyTask,
+  type Lifecycle,
+  LEGAL_TRANSITIONS,
+} from "@/data/myTasks";
 
 interface State {
   tasks: MyTask[];
-  /** Current id of the in_progress task, if any. */
+
   activeId: string | null;
-  /** Pending switch confirmation: replace active with this id. */
   pendingSwitchId: string | null;
+
+  setTasks: (tasks: MyTask[]) => void;
+
   setPendingSwitch: (id: string | null) => void;
-  /** Try to start (or resume) a task. Returns "switch" if user must confirm. */
+
   startTask: (id: string) => "started" | "switch" | "noop";
-  /** Force-start: pause the current active and start the requested. */
+
   confirmSwitch: () => void;
+
   pauseTask: (id: string) => void;
-  /** Submit a task for review with files + optional note. */
-  submitForReview: (id: string, note?: string, fileNames?: string[]) => void;
-  /** Move from revision back into in_progress (timer starts). */
+
+  submitForReview: (
+    id: string,
+    note?: string,
+    fileNames?: string[]
+  ) => void;
+
   resumeRevision: (id: string) => void;
-  /** Generic helper used by drag handler. Returns true if applied. */
+
   attemptMove: (id: string, to: Lifecycle) => boolean;
 }
 
@@ -27,56 +39,143 @@ function findActive(tasks: MyTask[]): string | null {
 
 function bankRunningTime(t: MyTask): MyTask {
   if (!t.runningSince) return t;
-  const min = Math.floor((Date.now() - new Date(t.runningSince).getTime()) / 60_000);
-  return { ...t, accumulatedMin: t.accumulatedMin + min, runningSince: undefined };
+
+  const min = Math.floor(
+    (Date.now() - new Date(t.runningSince).getTime()) / 60000
+  );
+
+  return {
+    ...t,
+    accumulatedMin: t.accumulatedMin + min,
+    runningSince: undefined,
+  };
 }
 
 export const useActiveTask = create<State>((set, get) => ({
-  tasks: initialMyTasks,
-  activeId: findActive(initialMyTasks),
+  tasks: [],
+
+  activeId: null,
+
   pendingSwitchId: null,
 
-  setPendingSwitch: (id) => set({ pendingSwitchId: id }),
+  setTasks: (tasks) =>
+    set({
+      tasks,
+      activeId: findActive(tasks),
+    }),
+
+  setPendingSwitch: (id) =>
+    set({
+      pendingSwitchId: id,
+    }),
 
   startTask: (id) => {
+    console.log("START CLICKED", id);
     const { tasks, activeId } = get();
+
     const task = tasks.find((t) => t.id === id);
+
     if (!task) return "noop";
+
     if (task.lifecycle === "in_progress") return "noop";
+
     if (activeId && activeId !== id) {
       set({ pendingSwitchId: id });
       return "switch";
     }
-    set({
+
+   set({
       tasks: tasks.map((t) =>
-        t.id === id ? { ...t, lifecycle: "in_progress", runningSince: new Date().toISOString() } : t,
+        t.id === id
+          ? {
+              ...t,
+              lifecycle: "in_progress",
+              runningSince: new Date().toISOString(),
+            }
+          : t
       ),
       activeId: id,
     });
+
+    supabase
+      .from("tasks")
+      .update({ status: "in_progress" })
+      .eq("id", id)
+      .then(({ error }) => {
+        if (error) console.error("Resume error:", error);
+      });
+
+    return "started";
+
+    supabase
+      .from("tasks")
+      .update({ status: "in_progress" })
+      .eq("id", id)
+      .then(({ error }) => {
+        if (error) console.error(error);
+      });
+
     return "started";
   },
 
   confirmSwitch: () => {
     const { tasks, activeId, pendingSwitchId } = get();
+
     if (!pendingSwitchId) return;
+
     const next = tasks.map((t) => {
-      if (t.id === activeId) return { ...bankRunningTime(t), lifecycle: "paused" as Lifecycle };
-      if (t.id === pendingSwitchId) return { ...t, lifecycle: "in_progress" as Lifecycle, runningSince: new Date().toISOString() };
+      if (t.id === activeId) {
+        return {
+          ...bankRunningTime(t),
+          lifecycle: "paused" as Lifecycle,
+        };
+      }
+
+      if (t.id === pendingSwitchId) {
+        return {
+          ...t,
+          lifecycle: "in_progress" as Lifecycle,
+          runningSince: new Date().toISOString(),
+        };
+      }
+
       return t;
     });
-    set({ tasks: next, activeId: pendingSwitchId, pendingSwitchId: null });
+
+    set({
+      tasks: next,
+      activeId: pendingSwitchId,
+      pendingSwitchId: null,
+    });
   },
 
   pauseTask: (id) => {
     const { tasks, activeId } = get();
+
     set({
-      tasks: tasks.map((t) => (t.id === id ? { ...bankRunningTime(t), lifecycle: "paused" } : t)),
+      tasks: tasks.map((t) =>
+        t.id === id
+          ? {
+              ...bankRunningTime(t),
+              lifecycle: "paused",
+            }
+          : t
+      ),
       activeId: activeId === id ? null : activeId,
     });
+
+    supabase
+      .from("tasks")
+      .update({ status: "paused" })
+      .eq("id", id)
+      .then(({ error }) => {
+        if (error) console.error(error);
+      });
   },
 
   submitForReview: (id, note, fileNames) => {
     const { tasks, activeId } = get();
+
     set({
       tasks: tasks.map((t) =>
         t.id === id
@@ -84,10 +183,14 @@ export const useActiveTask = create<State>((set, get) => ({
               ...bankRunningTime(t),
               lifecycle: "review",
               submittedAt: new Date().toISOString(),
-              attachments: t.attachments + (fileNames?.length ?? 0),
-              comments: t.comments + (note ? 1 : 0),
+              attachments:
+                (t.attachments ?? 0) +
+                (fileNames?.length ?? 0),
+              comments:
+                (t.comments ?? 0) +
+                (note ? 1 : 0),
             }
-          : t,
+          : t
       ),
       activeId: activeId === id ? null : activeId,
     });
@@ -95,42 +198,69 @@ export const useActiveTask = create<State>((set, get) => ({
 
   resumeRevision: (id) => {
     const { tasks, activeId } = get();
+
     if (activeId && activeId !== id) {
       set({ pendingSwitchId: id });
       return;
     }
+
     set({
       tasks: tasks.map((t) =>
-        t.id === id ? { ...t, lifecycle: "in_progress", runningSince: new Date().toISOString(), revisions: t.revisions + 1 } : t,
+        t.id === id
+          ? {
+              ...t,
+              lifecycle: "in_progress",
+              runningSince: new Date().toISOString(),
+              revisions: (t.revisions ?? 0) + 1,
+            }
+          : t
       ),
       activeId: id,
     });
+
+    supabase
+      .from("tasks")
+      .update({ status: "in_progress" })
+      .eq("id", id)
+      .then(({ error }) => {
+        if (error) console.error(error);
+      });
   },
 
   attemptMove: (id, to) => {
     const { tasks } = get();
+
     const task = tasks.find((t) => t.id === id);
+
     if (!task) return false;
+
     const allowed = LEGAL_TRANSITIONS[task.lifecycle];
+
     if (!allowed.includes(to)) return false;
+
     if (to === "in_progress") {
-      // resume / start path
       if (task.lifecycle === "revision") {
         get().resumeRevision(id);
       } else {
-        const r = get().startTask(id);
-        if (r === "switch") return false; // requires confirmation modal
+        const result = get().startTask(id);
+
+        if (result === "switch") {
+          return false;
+        }
       }
+
       return true;
     }
+
     if (to === "paused") {
       get().pauseTask(id);
       return true;
     }
+
     if (to === "review") {
-      // Submission requires modal — caller will open it; treat drag as "open submit modal".
       return false;
     }
+
     return false;
   },
 }));

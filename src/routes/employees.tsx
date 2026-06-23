@@ -1,5 +1,4 @@
 import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useEffect } from "react";
 import { AppShell } from "@/components/layout/app-shell";
 import { useRole } from "@/stores/role";
 import { cn } from "@/lib/utils";
@@ -11,8 +10,7 @@ const TABS = [
 ];
 
 function EmployeesLayout() {
-  const setRole = useRole((s) => s.setRole);
-  useEffect(() => { setRole("admin"); }, [setRole]);
+  const role = useRole((s) => s.role);
   const path = useRouterState({ select: (r) => r.location.pathname });
 
   return (
